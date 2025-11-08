@@ -2,8 +2,9 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from const import EOrderSide, EOrderType
-from Lighter import Lighter
+
+from lighter_ccxt_adapter.Lighter import Lighter
+from lighter_ccxt_adapter.const import EOrderSide, EOrderType
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

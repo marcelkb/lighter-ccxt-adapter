@@ -16,8 +16,8 @@ import lighter  # official SDK
 from lighter import OrderBooks, OrderBookDetails, OrderBookDetail, Orders, AccountPosition, DetailedAccount, \
     Candlestick, Candlesticks, Trades, SubAccounts
 
-from abstract.lighter import ImplicitAPI
-from const import EOrderSide, EOrderType, EOrderStatus
+from lighter_ccxt_adapter.abstract.lighter import ImplicitAPI
+from lighter_ccxt_adapter.const import EOrderSide, EOrderType, EOrderStatus
 
 
 # ---------- small async helper ----------
