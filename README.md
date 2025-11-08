@@ -65,5 +65,35 @@ from lighter_ccxt_adapter import Lighter
             "apiKeyIndex": API_KEY_INDEX,
             'options': {'account_id': ACCOUNT_ID},
         })
+        
+    symbol = 'SOL/USDC:USDC'  # market symbol
+    ticker = exchange.fetch_ticker(symbol)
+    print(f"{symbol} price: {ticker['last']}")
+    
+    position = exchange.fetch_position(symbol)
+    print(f"{position['info']['unrealisedPnl']} {position['info']['curRealisedPnl']} {position['info']['size']}")
+    
+    print(f"Creating LIMIT BUY order for {symbol}")
+    print(exchange.create_order(symbol, EOrderType.LIMIT.value, EOrderSide.BUY.value, AMOUNT, ticker['last'] * 0.5))
+  
+    print(f"Creating TAKE PROFIT MARKET SELL order for {symbol}")
+    print(exchange.create_order(
+        symbol,
+        EOrderType.MARKET.value,
+        EOrderSide.SELL.value,
+        AMOUNT,
+        ticker['last'] * 1.01,
+        params={'takeProfitPrice': '250', 'reduceOnly': True}
+    ))
+    
+    print(f"Creating STOP LOSS MARKET SELL order for {symbol}")
+    print(exchange.create_order(
+        symbol,
+        EOrderType.MARKET.value,
+        EOrderSide.SELL.value,
+        AMOUNT,
+        ticker['last'] * 1.01,
+        params={'stopLossPrice': '100', 'reduceOnly': True}
+    ))
 
 ```
