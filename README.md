@@ -56,8 +56,8 @@ from lighter_ccxt_adapter import Lighter
     PRIVATE_KEY = os.environ.get("PRIVATE_KEY")
     WALLET = os.environ.get("WALLET")
     API_KEY_INDEX = int(os.environ.get("API_KEY_INDEX"))
-
     L1_WALLET_ADDRESS = os.environ.get("L1_WALLET_ADDRESS")
+    
     exchange = Lighter.Lighter({
             'walletAddress': L1_WALLET_ADDRESS,
             "apiKey": WALLET,
