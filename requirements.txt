@@ -1,0 +1,4 @@
+python-dotenv
+ccxt
+lighter-python
+aiohttp==3.9.3
