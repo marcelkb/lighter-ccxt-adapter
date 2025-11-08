@@ -26,7 +26,7 @@ def main():
         "apiKeyIndex": API_KEY_INDEX,
         'options': {'account_id': ACCOUNT_ID},
     })
-    symbol = 'ETH/USDC:USDC'  # market symbol
+    symbol = 'SOL/USDC:USDC'  # market symbol
 
     ORDER_PLACEMENT = True
     AMOUNT = 0.01
