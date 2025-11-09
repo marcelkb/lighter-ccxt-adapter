@@ -72,6 +72,9 @@ def main():
     print("fetch leverage")
     print(exchange.fetch_leverage(symbol=symbol))
 
+    print("fetch margin mode")
+    print(exchange.fetch_margin_mode(symbol=symbol))
+
     # Loop through each open order and cancel it
     for order in orders:
         print(f"Canceling order {order['id']} for {order['symbol']}")

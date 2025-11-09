@@ -14,7 +14,7 @@ from ccxt.base.types import Strings, Int, Str, Num, OrderSide, OrderType, Balanc
 
 import lighter  # official SDK
 from lighter import OrderBooks, OrderBookDetails, OrderBookDetail, Orders, AccountPosition, DetailedAccount, \
-    Candlestick, Candlesticks, Trades, SubAccounts
+    Candlestick, Candlesticks, Trades, SubAccounts, DetailedAccounts
 
 from lighter_ccxt_adapter.abstract.lighter import ImplicitAPI
 from lighter_ccxt_adapter.const import EOrderSide, EOrderType, EOrderStatus
@@ -94,22 +94,22 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             "fetchOHLCV": True,
             "fetchBalance": True,
             "fetchTrades": True,
-            "fetchMyTrades": True,          # via account trades endpoint if present, else NotSupported
+            "fetchMyTrades": True,  # via account trades endpoint if present, else NotSupported
             "createOrder": True,
             "cancelOrder": True,
             "cancelAllOrders": True,
             "fetchOrder": True,
-            "fetchOrders": True,            # closed/history
-            "fetchOpenOrders": False,       # suggest WS-based cache for true open orders
+            "fetchOrders": True,  # closed/history
+            "fetchOpenOrders": False,  # suggest WS-based cache for true open orders
             "fetchClosedOrders": True,
             "fetchPositions": True,
             "fetchPosition": True,
             "setLeverage": False,
             "fetchLeverage": False,
             "setMarginMode": False,
-            "fetchFundingRate": True,       # via candlesticks/funding series (public)
+            "fetchFundingRate": True,  # via candlesticks/funding series (public)
             "fetchFundingRates": True,
-            "fetchFundingHistory": False,   # account funding history not via public HTTP list
+            "fetchFundingHistory": False,  # account funding history not via public HTTP list
             "addMargin": False,
             "reduceMargin": False,
         })
@@ -131,14 +131,14 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         }, self.options)
 
         self.fees.update({
-                'swap': {
-                    'taker': self.parse_number('0.0002'),
-                    'maker': self.parse_number('0.0002'),
-                },
-                'spot': {
-                    'taker': self.parse_number('0.0002'),
-                    'maker': self.parse_number('0.0002'),
-                },
+            'swap': {
+                'taker': self.parse_number('0.0002'),
+                'maker': self.parse_number('0.0002'),
+            },
+            'spot': {
+                'taker': self.parse_number('0.0002'),
+                'maker': self.parse_number('0.0002'),
+            },
         })
 
         self.name = "Lighter"
@@ -175,14 +175,20 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             market_id = market.get('id')
             return market_id
 
+    def ccxt_to_base(self, symbol):
+        if '/' in symbol:
+            base, rest = symbol.split('/', 1)
+            quote = rest.split(':', 1)[0]
+            return f"{base}"
+        return symbol
 
     def ccxt_to_lighter_symbol(self, symbol: str) -> str:
-            # BTC/USDC or BTC/USDC:USDC -> BTC_USDC
-            if '/' in symbol:
-                base, rest = symbol.split('/', 1)
-                quote = rest.split(':', 1)[0]
-                return f"{base}_{quote}"
-            return symbol
+        # BTC/USDC or BTC/USDC:USDC -> BTC_USDC
+        if '/' in symbol:
+            base, rest = symbol.split('/', 1)
+            quote = rest.split(':', 1)[0]
+            return f"{base}_{quote}"
+        return symbol
 
     def safe_number(self, obj: Any, key: str, default=None):
         v = self.safe_value(obj, key)
@@ -207,7 +213,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         markets_raw = info.get("markets") if isinstance(info, dict) else info
         if markets_raw is None:
             # some SDKs embed within "data"
-            markets_raw:OrderBooks = self.safe_value(info, "data", {}).get("markets") if isinstance(info, dict) else []
+            markets_raw: OrderBooks = self.safe_value(info, "data", {}).get("markets") if isinstance(info, dict) else []
 
         result = []
         for m in markets_raw.order_books or []:
@@ -270,14 +276,12 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         self.markets_by_id = {mk['id']: mk for mk in result if mk.get('id')}
         return result
 
-
     def fetch_ticker(self, symbol: str, params={}) -> Ticker:
         self.load_markets()
         id = self.symbol_to_market_id(symbol)
-        # exchange_stats often returns ticker-like aggregates
-        details:OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
-        detail:OrderBookDetail = details.order_book_details[0]
-        detail:OrderBookDetail = detail
+        details: OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
+        detail: OrderBookDetail = details.order_book_details[0]
+        detail: OrderBookDetail = detail
         price = detail.last_trade_price
 
         ts = self.milliseconds()
@@ -317,9 +321,11 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if limit is None:
             limit = 100
         auth_token, _ = self.signer_client.create_auth_token_with_expiry()
-        resp:Trades = run(self.order_api.trades(sort_by="timestamp",market_id=market_id, account_index=self.account_id, limit=limit, authorization=auth_token))
+        resp: Trades = run(
+            self.order_api.trades(sort_by="timestamp", market_id=market_id, account_index=self.account_id, limit=limit,
+                                  authorization=auth_token))
         out = []
-        for trade in resp.trades: # type Trade
+        for trade in resp.trades:  # type Trade
             out.append({
                 'id': trade.trade_id,
                 'order': None,
@@ -339,23 +345,26 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     def fetch_my_trades(self, symbol: Str = None, since: Int = None, limit: Int = None, params={}):
         if symbol is None:
-            symbol = "ETH/USDC:USDC" #default TODO
+            symbol = "ETH/USDC:USDC"  # default TODO
         return self.fetch_trades(symbol, since, limit, params)
 
-    def fetch_ohlcv(self, symbol: str, timeframe='1m', since: Int = None, limit: Int = None, params={}) -> List[List[Num]]:
+    def fetch_ohlcv(self, symbol: str, timeframe='1m', since: Int = None, limit: Int = None, params={}) -> List[
+        List[Num]]:
         self.load_markets()
         market_id = self.markets[symbol]["id"]
         interval = timeframe
         if interval == "2h":
-            interval = "1h" #fallback to next detailed timeframe
+            interval = "1h"  # fallback to next detailed timeframe
         end_timestamp = int(datetime.now().timestamp())
         if since is None:
             since = self._calculate_since(timeframe, limit, end_timestamp)
         if limit is None:
             limit = 1000
-        resp:Candlesticks = run(self.candlestick_api.candlesticks(market_id=market_id, resolution=interval, end_timestamp=end_timestamp, start_timestamp=since, count_back=limit))
+        resp: Candlesticks = run(
+            self.candlestick_api.candlesticks(market_id=market_id, resolution=interval, end_timestamp=end_timestamp,
+                                              start_timestamp=since, count_back=limit))
         out = []
-        for c in resp.candlesticks: # type: Candlestick
+        for c in resp.candlesticks:  # type: Candlestick
             out.append([
                 c.timestamp,
                 c.open,
@@ -408,7 +417,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
     def fetch_balance(self, params={}) -> Balances:
         self.load_markets()
         acct = run(self.account_api.account(by="index", value=str(self.account_id)))
-        detailedAccount:DetailedAccount = acct.accounts[0]
+        detailedAccount: DetailedAccount = acct.accounts[0]
         available = detailedAccount.available_balance
         collateral = detailedAccount.collateral
         totalAssetValue = detailedAccount.total_asset_value
@@ -438,7 +447,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 return p
         return None
 
-    def _parse_position(self, position:AccountPosition) -> Dict[str, Any]:
+    def _parse_position(self, position: AccountPosition) -> Dict[str, Any]:
         market_id = position.market_id
         symbol = position.symbol + "/USDC:USDC"
         ts = self.milliseconds()
@@ -450,7 +459,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         entry_price = position.avg_entry_price
         mark_price = -1
         notional = position.position_value
-        leverage = 1 #TODO
+        leverage = 1  # TODO
         unreal = position.unrealized_pnl
         realized = position.realized_pnl
         liq = position.liquidation_price
@@ -495,7 +504,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             'percentage': pct,
         }
 
-    def create_order(self, symbol: str, type: str, side: str, amount: float, price: Optional[float] = None, params: Optional[Dict] = None) -> Order:
+    def create_order(self, symbol: str, type: str, side: str, amount: float, price: Optional[float] = None,
+                     params: Optional[Dict] = None) -> Order:
         if self.signer_client is None:
             raise AuthenticationError("Private key required to create orders on Lighter")
         self.load_markets()
@@ -608,17 +618,17 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             raise AuthenticationError("Private key required to cancel orders on Lighter")
         self.load_markets()
         if symbol is None:
-            market_id = 0 # todo fallback?
+            market_id = 0  # todo fallback?
         else:
             market_id = int(self.markets[symbol]["id"])
         if market_id is None:
-            market_id = 0 # fallback  TODO
+            market_id = 0  # fallback  TODO
         canceledOrder, tx_hash, err = run(self.signer_client.cancel_order(market_index=market_id, order_index=int(id)))
         return canceledOrder is not None and tx_hash is not None and err is None
 
     def cancel_all_orders(self, symbol: str = None, params={}) -> List[Order]:
-       open_orders = self.fetch_open_orders(symbol=symbol)
-       for order in open_orders:
+        open_orders = self.fetch_open_orders(symbol=symbol)
+        for order in open_orders:
             self.cancel_order(order['id'], order['symbol'], params)
 
     def fetch_order(self, order_id, symbol=None, params=None):
@@ -651,8 +661,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         self.load_markets()
         auth_token, _ = self.signer_client.create_auth_token_with_expiry()
         orders: Orders = run(self.order_api.account_active_orders(account_index=self.account_id,
-                                                                    market_id=self.markets[symbol]["id"],
-                                                                    authorization=auth_token, auth=auth_token))
+                                                                  market_id=self.markets[symbol]["id"],
+                                                                  authorization=auth_token, auth=auth_token))
         out = []
         for o in orders.orders:  # type Orders
             out.append(self._parse_order(o))
@@ -661,9 +671,11 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
     def fetch_closed_orders(self, symbol: str = None, since: Int = None, limit: Int = None, params={}) -> List[Order]:
         self.load_markets()
         auth_token, _ = self.signer_client.create_auth_token_with_expiry()
-        orders:Orders = run(self.order_api.account_inactive_orders(account_index=self.account_id, limit = 100, market_id=self.markets[symbol]["id"], authorization=auth_token, auth=auth_token))
+        orders: Orders = run(self.order_api.account_inactive_orders(account_index=self.account_id, limit=100,
+                                                                    market_id=self.markets[symbol]["id"],
+                                                                    authorization=auth_token, auth=auth_token))
         out = []
-        for o in orders.orders: # type Orders
+        for o in orders.orders:  # type Orders
             out.append(self._parse_order(o))
         return out
 
@@ -682,7 +694,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         }
         return mapping.get(status, status)
 
-    def _parse_order(self, order:lighter.models.Order) -> Order:
+    def _parse_order(self, order: lighter.models.Order) -> Order:
         # Normalize a variety of shapes: tx receipts, order DTOs, etc.
         oid = order.order_id
         market_id = order.market_index
@@ -729,15 +741,14 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             'info': order.to_dict(),
         }
 
-
     def set_margin_mode(self, marginMode: str, symbol: Str = None, params={}):
         self.load_markets()
         if marginMode == "isolated":
             run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=3,
-                                               margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
+                                                   margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
         else:
             run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=3,
-                                               margin_mode=self.signer_client.CROSS_MARGIN_MODE))
+                                                   margin_mode=self.signer_client.CROSS_MARGIN_MODE))
 
     def set_leverage(self, leverage: Int, symbol: Str = None, params={}):
         self.load_markets()
@@ -745,10 +756,37 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                                                margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
 
     def fetch_leverage(self, symbol: str, params={}):
-        return 3 #static TODO
+        baseSymbol = self.ccxt_to_base(symbol)
+        detailedAccounts: DetailedAccounts = run(self.account_api.account(by="index", value=f"{self.account_id}"))
+        detailedAccount: DetailedAccount = detailedAccounts.accounts[0]
+        positions: List[AccountPosition] = detailedAccount.positions
+        for position in positions:
+            if position.symbol == baseSymbol:
+               init_margin = position.initial_margin_fraction
+               current_margin = position.allocated_margin
+               value = position.position_value
+               return float(value) / float(current_margin)
+
+        id = self.symbol_to_market_id(symbol)
+        details: OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
+        detail: OrderBookDetail = details.order_book_details[0]
+        detail: OrderBookDetail = detail
+        lev = detail.default_initial_margin_fraction
+        if lev > 100:
+            return 3 # Fallback for implausible values
+        return lev
 
     def fetch_margin_mode(self, symbol: str, params={}):
-        return "isolated" #static TODO
+        baseSymbol = self.ccxt_to_base(symbol)
+        detailedAccounts: DetailedAccounts = run(self.account_api.account(by="index", value=f"{self.account_id}"))
+        detailedAccount: DetailedAccount = detailedAccounts.accounts[0]
+        positions: List[AccountPosition] = detailedAccount.positions
+        for position in positions:
+            if position.symbol == baseSymbol:
+                if position.margin_mode == 1:
+                    return "isolated"
+                else:
+                    return "cross"
 
     def sign(self, path: str, api: str = "public", method: str = "GET", params: Optional[Dict] = None,
              headers: Optional[Dict] = None, body: Optional[Any] = None):
@@ -841,7 +879,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         }
 
     def fetch_accounts(self, params={}):
-        accounts:SubAccounts = run(self.account_api.accounts_by_l1_address(l1_address=self.walletAddress))
+        accounts: SubAccounts = run(self.account_api.accounts_by_l1_address(l1_address=self.walletAddress))
         return accounts.to_dict()
 
     def close(self):
