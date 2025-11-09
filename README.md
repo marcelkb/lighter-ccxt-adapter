@@ -2,7 +2,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)
 
-# Ligther CCXT Adapter
+# Lighter CCXT Adapter
 
 A CCXT-compatible adapter/wrapper for the Lighter Python SDK. It maps Lighter SDK methods onto familiar CCXT interfaces.
 
@@ -50,6 +50,7 @@ L1_WALLET_ADDRESS= Your lighter main wallet Adddress
 
 ```
 from lighter_ccxt_adapter import Lighter
+from lighter_ccxt_adapter.const import EOrderSide, EOrderType
 
     load_dotenv(".env.lighter")
     ACCOUNT_ID = int(os.environ.get("ACCOUNT_ID"))
