@@ -6,7 +6,7 @@
 
 A CCXT-compatible adapter/wrapper for the Lighter Python SDK. It maps Lighter SDK methods onto familiar CCXT interfaces.
 
-- CCXT: https://docs.ccxt.com/
+- CCXT: https://github.com/ccxt/ccxt
 - Lighter SDK (Python): https://github.com/elliottech/lighter-python/
 
 # Features
