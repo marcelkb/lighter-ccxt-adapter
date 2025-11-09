@@ -762,19 +762,15 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         positions: List[AccountPosition] = detailedAccount.positions
         for position in positions:
             if position.symbol == baseSymbol:
-               init_margin = position.initial_margin_fraction
-               current_margin = position.allocated_margin
-               value = position.position_value
-               return float(value) / float(current_margin)
+               lev = 100 / float(position.initial_margin_fraction)
+               return int(lev)
 
         id = self.symbol_to_market_id(symbol)
         details: OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
         detail: OrderBookDetail = details.order_book_details[0]
         detail: OrderBookDetail = detail
-        lev = detail.default_initial_margin_fraction
-        if lev > 100:
-            return 3 # Fallback for implausible values
-        return lev
+        lev = 10000 / float(detail.default_initial_margin_fraction)
+        return int(lev)
 
     def fetch_margin_mode(self, symbol: str, params={}):
         baseSymbol = self.ccxt_to_base(symbol)
