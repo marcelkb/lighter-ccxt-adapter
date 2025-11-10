@@ -744,10 +744,10 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
     def set_margin_mode(self, marginMode: str, symbol: Str = None, params={}):
         self.load_markets()
         if marginMode == "isolated":
-            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=3,
+            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=self.fetch_leverage(symbol),
                                                    margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
         else:
-            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=3,
+            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=self.fetch_leverage(symbol),
                                                    margin_mode=self.signer_client.CROSS_MARGIN_MODE))
 
     def set_leverage(self, leverage: Int, symbol: Str = None, params={}):
