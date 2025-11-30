@@ -591,12 +591,17 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     def _create_limit_order(self, amount: float, client_order_index: int, market_id: int, price: float | None,
                             side, type):
+        precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
+        precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        if precision_price == 1 and side == EOrderSide.SELL.value:
+            precision_price = 0 # by precision 1 no multiplicator but only for sell, esp. btc case?
+
         if type == EOrderType.LIMIT.value:
             return run(self.signer_client.create_order(
                 market_index=market_id,
                 client_order_index=client_order_index,
-                base_amount=int(float(amount) * 10000),
-                price=int(float(price) * 100),
+                base_amount=int(float(amount) * 10**precision_amount),
+                price=int(float(price) * 10**precision_price),
                 is_ask=side == EOrderSide.SELL.value,
                 order_type=lighter.SignerClient.ORDER_TYPE_LIMIT,
                 time_in_force=lighter.SignerClient.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
@@ -604,11 +609,12 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 trigger_price=0,
             ))
         else:
+            slippage = 1.01 if side == EOrderSide.SELL.value else 0.99
             return run(self.signer_client.create_market_order(
                 market_index=market_id,
                 client_order_index=client_order_index,
-                base_amount=int(float(amount) * 10000),
-                avg_execution_price=int(float(price) * 100),
+                base_amount=int(float(amount) * 10**precision_amount),
+                avg_execution_price=int(float(price) * 10**precision_price * slippage), # worst acceptable price for the order
                 is_ask=side == EOrderSide.SELL.value,
                 reduce_only=False,
             ))
@@ -743,11 +749,12 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     def set_margin_mode(self, marginMode: str, symbol: Str = None, params={}):
         self.load_markets()
+        leverage = self.safe_integer(params, 'leverage', 3)
         if marginMode == "isolated":
-            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=self.fetch_leverage(symbol),
+            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=leverage,
                                                    margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
         else:
-            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=self.fetch_leverage(symbol),
+            run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=leverage,
                                                    margin_mode=self.signer_client.CROSS_MARGIN_MODE))
 
     def set_leverage(self, leverage: Int, symbol: Str = None, params={}):
