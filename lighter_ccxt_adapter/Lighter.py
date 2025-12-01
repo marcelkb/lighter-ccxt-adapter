@@ -512,6 +512,12 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         market_id = self.markets[symbol]["id"]
         client_order_index = random.randint(1000000, 9999999)
 
+        precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
+        precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        if params == {}:
+            if precision_price == 1 and side == EOrderSide.SELL.value:
+                precision_price = 0  # by precision 1 no multiplicator but only for sell?
+
         tx = None
         err = None
 
@@ -521,20 +527,20 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 tx, tx_hash, err = run(self.signer_client.create_tp_order(
                     market_index=market_id,
                     client_order_index=0,
-                    base_amount=int(float(amount) * 10000),
-                    price=int(float(takeProfitPrice) * 100),
+                    base_amount=int(float(amount) * 10 ** precision_amount),
+                    price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
-                    trigger_price=int(float(takeProfitPrice) * 100),
+                    trigger_price=int(float(takeProfitPrice) * 10 ** precision_price),
                 ))
             elif "stopLossPrice" in params:
                 stopLossPrice = params['stopLossPrice']
                 tx, tx_hash, err = run(self.signer_client.create_sl_order(
                     market_index=market_id,
                     client_order_index=0,
-                    base_amount=int(float(amount) * 10000),
-                    price=int(float(stopLossPrice) * 100),
+                    base_amount=int(float(amount) * 10 ** precision_amount),
+                    price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
-                    trigger_price=int(float(stopLossPrice) * 100),
+                    trigger_price=int(float(stopLossPrice) * 10 ** precision_price),
                 ))
             elif "reduceOnly" or "reduce_only" in params:
                 tx, tx_hash, err = self._create_limit_order(amount, client_order_index, market_id, price, side, type)
