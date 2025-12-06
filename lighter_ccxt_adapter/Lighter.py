@@ -615,7 +615,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 trigger_price=0,
             ))
         else:
-            slippage = 1.01 if side == EOrderSide.SELL.value else 0.99
+            slippage = 1.01 if side == EOrderSide.BUY.value else 0.99
             return run(self.signer_client.create_market_order(
                 market_index=market_id,
                 client_order_index=client_order_index,
