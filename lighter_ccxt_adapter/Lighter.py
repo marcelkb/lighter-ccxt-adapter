@@ -13,8 +13,8 @@ from ccxt.base.types import Strings, Int, Str, Num, OrderSide, OrderType, Balanc
     Order, Position, FundingRate
 
 import lighter  # official SDK
-from lighter import OrderBooks, OrderBookDetails, OrderBookDetail, Orders, AccountPosition, DetailedAccount, \
-    Candlestick, Candlesticks, Trades, SubAccounts, DetailedAccounts
+from lighter import OrderBooks, OrderBookDetails, OrderBookDetails, Orders, AccountPosition, DetailedAccount, \
+    Candlestick, Candlesticks, Trades, SubAccounts, DetailedAccounts, PerpsOrderBookDetail
 
 from lighter_ccxt_adapter.abstract.lighter import ImplicitAPI
 from lighter_ccxt_adapter.const import EOrderSide, EOrderType, EOrderStatus
@@ -62,9 +62,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if self.private_key:
             self.signer_client = lighter.SignerClient(
                 url=self.base_url,
-                private_key=self.private_key,
                 account_index=self.account_id,
-                api_key_index=self.api_key_index,
+                api_private_keys={self.api_key_index: self.private_key},
             )
 
         # HTTP APIs exposed by the SDK
@@ -280,8 +279,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         self.load_markets()
         id = self.symbol_to_market_id(symbol)
         details: OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
-        detail: OrderBookDetail = details.order_book_details[0]
-        detail: OrderBookDetail = detail
+        detail: PerpsOrderBookDetail = details.order_book_details[0]
+        detail: PerpsOrderBookDetail = detail
         price = detail.last_trade_price
 
         ts = self.milliseconds()
@@ -512,8 +511,13 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         market_id = self.markets[symbol]["id"]
         client_order_index = random.randint(1000000, 9999999)
 
-        precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
-        precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        data = self.markets_by_id[market_id]
+        if isinstance(data, list):
+            precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
+            precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        else:
+            precision_amount = int(self.markets_by_id[market_id]["precision"]["amount"])
+            precision_price = int(self.markets_by_id[market_id]["precision"]["price"])
         if params == {}:
             if precision_price == 1 and side == EOrderSide.SELL.value:
                 precision_price = 0  # by precision 1 no multiplicator but only for sell?
@@ -597,8 +601,13 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     def _create_limit_order(self, amount: float, client_order_index: int, market_id: int, price: float | None,
                             side, type):
-        precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
-        precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        data = self.markets_by_id[market_id]
+        if isinstance(data, list):
+            precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
+            precision_price = int(self.markets_by_id[market_id][0]["precision"]["price"])
+        else:
+            precision_amount = int(self.markets_by_id[market_id]["precision"]["amount"])
+            precision_price = int(self.markets_by_id[market_id]["precision"]["price"])
         if precision_price == 1 and side == EOrderSide.SELL.value:
             precision_price = 0 # by precision 1 no multiplicator but only for sell, esp. btc case?
 
@@ -780,8 +789,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
         id = self.symbol_to_market_id(symbol)
         details: OrderBookDetails = run(self.order_api.order_book_details(market_id=id))
-        detail: OrderBookDetail = details.order_book_details[0]
-        detail: OrderBookDetail = detail
+        detail: PerpsOrderBookDetail = details.order_book_details[0]
+        detail: PerpsOrderBookDetail = detail
         lev = 10000 / float(detail.default_initial_margin_fraction)
         return int(lev)
 
