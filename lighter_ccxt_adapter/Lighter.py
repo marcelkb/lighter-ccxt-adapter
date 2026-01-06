@@ -553,6 +553,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
         if err is not None:
             print(f"error occured: {err}")
+            raise InvalidOrder(self.id + ' ' + err)
             return None
 
         id = None
@@ -645,6 +646,8 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if market_id is None:
             market_id = 0  # fallback  TODO
         canceledOrder, tx_hash, err = run(self.signer_client.cancel_order(market_index=market_id, order_index=int(id)))
+        if err is not None:
+            raise InvalidOrder(err)
         return canceledOrder is not None and tx_hash is not None and err is None
 
     def cancel_all_orders(self, symbol: str = None, params={}) -> List[Order]:
