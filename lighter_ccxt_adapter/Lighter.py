@@ -525,6 +525,9 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         tx = None
         err = None
 
+        if price is None:
+            raise RuntimeError("price needed, also for market orders to apply slippage protection")
+
         if params is not None and params != {}:
             if "takeProfitPrice" in params:
                 takeProfitPrice = params['takeProfitPrice']
@@ -565,7 +568,11 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 order = self.fetch_order(order_id=id, symbol=symbol)
                 status = order["status"]
             else:
-                status = "open"
+                if type == EOrderType.MARKET.value:
+                    id = "FilledOrderPlaceholderId"
+                    status = "closed"
+                else:
+                    status = "open"
             info = tx.__dict__
             info["origQty"] = amount
 
