@@ -556,7 +556,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
         if err is not None:
             print(f"error occured: {err}")
-            raise InvalidOrder(self.id + ' ' + err)
+            raise InvalidOrder(self.id + ' ' + str(e))
             return None
 
         id = None

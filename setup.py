@@ -26,6 +26,7 @@ PYTHON_REQUIRES = ">=3.7"
 REQUIRES = [
     "python-dotenv",
     "ccxt",
+    "lighter-python",
     "aiohttp == 3.9.3",
 ]
 
