@@ -462,6 +462,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         unreal = position.unrealized_pnl
         realized = position.realized_pnl
         liq = position.liquidation_price
+        total_funding_payout = position.total_funding_paid_out
         margin_mode = 'cross' if position.margin_mode == 0 else "isolated"
         # percentage PnL
         pct = None
@@ -475,6 +476,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         additionalInfo['unrealisedPnl'] = unreal
         additionalInfo['curRealisedPnl'] = realized
         additionalInfo['size'] = size
+        additionalInfo['total_funding_payout'] = total_funding_payout
 
         return {
             'info': self.extend(position.to_dict(), additionalInfo),
@@ -668,19 +670,19 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             if order["id"] == order_id:
                 return order
 
-    def _parse_order(self, resp):
-        return {
-            "id": resp.id,
-            "symbol": resp.symbol,
-            "status": resp.status,
-            "type": resp.type,
-            "side": resp.side,
-            "price": float(resp.price or 0),
-            "amount": float(resp.quantity or 0),
-            "filled": float(resp.filled or 0),
-            "remaining": float(resp.remaining or 0),
-            "info": resp.to_dict(),
-        }
+    # def _parse_order(self, resp):
+    #     return {
+    #         "id": resp.id,
+    #         "symbol": resp.symbol,
+    #         "status": resp.status,
+    #         "type": resp.type,
+    #         "side": resp.side,
+    #         "price": float(resp.price or 0),
+    #         "amount": float(resp.quantity or 0),
+    #         "filled": float(resp.filled or 0),
+    #         "remaining": float(resp.remaining or 0),
+    #         "info": resp.to_dict(),
+    #     }
 
     def fetch_orders(self, symbol: str = None, since: Int = None, limit: Int = None, params={}) -> List[Order]:
         open_orders = self.fetch_open_orders(symbol, since, limit, params)
@@ -749,7 +751,13 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             f = order.fee
             fee = {'cost': self.safe_number(f, 'cost'), 'currency': self.safe_string(f, 'currency')}
 
-        return {
+        additional = {}
+        if order.type == "take-profit":
+            additional["takeProfitPrice"] = order.trigger_price
+        elif order.type == "stop-loss":
+            additional["stopLossPrice"] = order.trigger_price
+
+        return self.extend({
             'id': oid,
             'clientOrderId': client_oid,
             'timestamp': ts,
@@ -770,7 +778,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             'trades': None,
             'fee': fee,
             'info': order.to_dict(),
-        }
+        }, additional)
 
     def set_margin_mode(self, marginMode: str, symbol: Str = None, params={}):
         self.load_markets()
