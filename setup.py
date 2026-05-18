@@ -29,6 +29,7 @@ REQUIRES = [
     "lighter-python",
     "aiohttp == 3.9.3",
 ]
+#IF error uninstall aiodns!
 
 setup(
     name=NAME,

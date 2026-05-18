@@ -535,7 +535,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 takeProfitPrice = params['takeProfitPrice']
                 tx, tx_hash, err = run(self.signer_client.create_tp_order(
                     market_index=market_id,
-                    client_order_index=0,
+                    client_order_index=client_order_index,
                     base_amount=int(float(amount) * 10 ** precision_amount),
                     price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
@@ -545,7 +545,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 stopLossPrice = params['stopLossPrice']
                 tx, tx_hash, err = run(self.signer_client.create_sl_order(
                     market_index=market_id,
-                    client_order_index=0,
+                    client_order_index=client_order_index,
                     base_amount=int(float(amount) * 10 ** precision_amount),
                     price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
@@ -558,8 +558,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
         if err is not None:
             print(f"error occured: {err}")
-            raise InvalidOrder(self.id + ' ' + str(e))
-            return None
+            raise InvalidOrder(self.id + ' ' + str(err))
 
         id = None
         status = "open"
