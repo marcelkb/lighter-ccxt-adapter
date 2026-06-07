@@ -2,7 +2,10 @@ from enum import Enum
 
 
 class EOrderSide(str, Enum):
-    BUY = "buy",
+    # Note: a trailing comma makes the value a 1-tuple ("buy",) rather
+    # than the bare string "buy", which then breaks valueOf() lookups
+    # because they compare against the literal venue string.
+    BUY = "buy"
     SELL = "sell"
 
     @classmethod
@@ -18,7 +21,9 @@ class EOrderSide(str, Enum):
 
 
 class EOrderStatus(str, Enum):
-    CLOSED = "closed",
+    # Note: a trailing comma makes the value a 1-tuple ("closed",) rather
+    # than the bare string "closed", which then breaks valueOf() lookups.
+    CLOSED = "closed"
     PARTIALLY_FILLED = "partially-filled"
     FILLED = "filled"
     REJECTED = "rejected"

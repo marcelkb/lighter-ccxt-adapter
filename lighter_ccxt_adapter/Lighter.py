@@ -530,9 +530,22 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if price is None:
             raise RuntimeError("price needed, also for market orders to apply slippage protection")
 
+        # Read reduceOnly from params (accept both spellings). Used both for
+        # the signer call below and for the response dict's `reduceOnly`
+        # field — previously the response always reported True when params
+        # was None, which lied to callers about plain entries.
+        reduce_only = False
+        if params:
+            reduce_only = bool(params.get("reduceOnly") or params.get("reduce_only"))
+
         if params is not None and params != {}:
             if "takeProfitPrice" in params:
                 takeProfitPrice = params['takeProfitPrice']
+                # SL/TP triggers must be reduce-only — without it, a fill that
+                # exceeds the remaining position by even a single base-unit
+                # (rounding / matching-engine quirk) flips the position into
+                # the opposite direction and leaves dust the caller can't
+                # reconcile. signer default is reduce_only=False, so force it.
                 tx, tx_hash, err = run(self.signer_client.create_tp_order(
                     market_index=market_id,
                     client_order_index=client_order_index,
@@ -540,7 +553,9 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                     price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
                     trigger_price=int(float(takeProfitPrice) * 10 ** precision_price),
+                    reduce_only=True,
                 ))
+                reduce_only = True
             elif "stopLossPrice" in params:
                 stopLossPrice = params['stopLossPrice']
                 tx, tx_hash, err = run(self.signer_client.create_sl_order(
@@ -550,11 +565,24 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                     price=int(float(price) * 10 ** precision_price),
                     is_ask=side == EOrderSide.SELL,
                     trigger_price=int(float(stopLossPrice) * 10 ** precision_price),
+                    reduce_only=True,
                 ))
-            elif "reduceOnly" or "reduce_only" in params:
-                tx, tx_hash, err = self._create_limit_order(amount, client_order_index, market_id, price, side, type)
+                reduce_only = True
+            # Was `elif "reduceOnly" or "reduce_only" in params:` — Python
+            # operator precedence parses that as `("reduceOnly") or
+            # ("reduce_only" in params)`, which is always True. Fixed and
+            # generalised: any non-TP/SL order goes through the limit/market
+            # path with the resolved reduce_only flag.
+            else:
+                tx, tx_hash, err = self._create_limit_order(
+                    amount, client_order_index, market_id, price, side, type,
+                    reduce_only=reduce_only,
+                )
         else:
-            tx, tx_hash, err = self._create_limit_order(amount, client_order_index, market_id, price, side, type)
+            tx, tx_hash, err = self._create_limit_order(
+                amount, client_order_index, market_id, price, side, type,
+                reduce_only=reduce_only,
+            )
 
         if err is not None:
             print(f"error occured: {err}")
@@ -565,6 +593,63 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         info = {}
         if tx is not None:
             id = tx.order_book_index
+
+            # Lighter accepts the signed tx synchronously but may not yet
+            # have assigned an order_book_index by the time we get the
+            # receipt. The order IS on the book — just un-indexed. Without
+            # an id the caller can't poll fill status or cancel the order,
+            # so a slow-filling limit becomes a zombie: it rests until the
+            # market eventually crosses the price (sometimes many minutes
+            # later), fills, and leaves the caller with an untracked
+            # position. Poll fetch_open_orders for our own
+            # client_order_index for a few seconds so we surface the real
+            # id as soon as indexing catches up.
+            #
+            # ONLY for plain limit entries. Triggered orders (stopLossPrice
+            # / takeProfitPrice) have a slower indexing path on Lighter
+            # that frequently exceeds the 7s poll budget — the wait blocks
+            # the caller's main loop without producing an id, then the
+            # bot places a duplicate on the next reconcile cycle. The bot
+            # adopts unmatched reduce-only stops/TPs on its own reconcile
+            # path (see live_engine.LiveEngine.reconcile's SL/TP integrity
+            # checks), so returning id=None immediately for triggered
+            # orders is the lower-latency, duplicate-free path. Market
+            # orders fill instantly and don't rest in open_orders at all,
+            # so polling for them is meaningless (handled below by the
+            # FilledOrderPlaceholderId fallback).
+            is_triggered = bool(
+                params and (
+                    params.get("takeProfitPrice")
+                    or params.get("stopLossPrice")
+                )
+            )
+            if (
+                id is None
+                and type == EOrderType.LIMIT.value
+                and not is_triggered
+            ):
+                for wait_s in (0.5, 0.5, 1.0, 1.0, 2.0, 2.0):  # ~7s total
+                    time.sleep(wait_s)
+                    try:
+                        resting = self.fetch_open_orders(symbol=symbol)
+                    except Exception:
+                        resting = []
+                    for o in resting:
+                        coid = o.get("clientOrderId")
+                        if coid is None:
+                            continue
+                        # SDK may surface clientOrderId as int or str
+                        # depending on version — coerce both sides.
+                        try:
+                            if int(coid) == int(client_order_index):
+                                id = o.get("id")
+                                status = o.get("status") or "open"
+                                break
+                        except (TypeError, ValueError):
+                            continue
+                    if id is not None:
+                        break
+
             if id is not None:
                 order = self.fetch_order(order_id=id, symbol=symbol)
                 status = order["status"]
@@ -588,7 +673,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             'type': type,
             'timeInForce': False,
             'postOnly': True,
-            'reduceOnly': params.get('reduceOnly', False) if params is not None else True,
+            'reduceOnly': reduce_only,
             'side': side,
             'price': price,
             'triggerPrice': price,
@@ -609,7 +694,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             'trades': []})
 
     def _create_limit_order(self, amount: float, client_order_index: int, market_id: int, price: float | None,
-                            side, type):
+                            side, type, reduce_only: bool = False):
         data = self.markets_by_id[market_id]
         if isinstance(data, list):
             precision_amount = int(self.markets_by_id[market_id][0]["precision"]["amount"])
@@ -629,7 +714,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 is_ask=side == EOrderSide.SELL.value,
                 order_type=lighter.SignerClient.ORDER_TYPE_LIMIT,
                 time_in_force=lighter.SignerClient.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
-                reduce_only=False,
+                reduce_only=reduce_only,
                 trigger_price=0,
             ))
         else:
@@ -640,7 +725,7 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 base_amount=int(float(amount) * 10**precision_amount),
                 avg_execution_price=int(float(price) * 10**precision_price * slippage), # worst acceptable price for the order
                 is_ask=side == EOrderSide.SELL.value,
-                reduce_only=False,
+                reduce_only=reduce_only,
             ))
 
     def cancel_order(self, id: str, symbol: str = None, params={}) -> Order:
@@ -713,18 +798,35 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     # -------------- parsers --------------
     def parse_order_status(self, status: str) -> str:
+        # Output values MUST be members of EOrderStatus (see const.py) —
+        # the caller in create_order feeds the result into
+        # EOrderStatus.valueOf(...) which raises on unknown strings. Lighter
+        # reports several states the original mapping didn't cover
+        # (notably 'pending' on resting trigger orders like SL/TP),
+        # which used to crash the entire create_order call after the
+        # signed tx had already been accepted by the venue — leaving the
+        # bot with a placed-but-untracked protective order.
         mapping = {
             'open': 'open',
-            'partially_filled': 'open',
-            'filled': 'closed',
+            'partially_filled': 'partially-filled',
+            'partially-filled': 'partially-filled',
+            'filled': 'closed',        # ccxt convention: filled order → 'closed'
+            'closed': 'closed',
             'canceled': 'canceled',
             'cancelled': 'canceled',
-            'expired': 'expired',
+            'expired': 'canceled',
             'rejected': 'rejected',
             'triggered': 'open',
             'untriggered': 'open',
+            'pending': 'open',         # awaiting trigger / matching — still on book
+            'in-progress': 'open',
+            'in_progress': 'open',
+            'reduceOnlyCanceled': 'canceled',
         }
-        return mapping.get(status, status)
+        # Default to 'open' for any unknown state so the caller doesn't
+        # crash on EOrderStatus lookup. Safer than the previous identity
+        # default which guaranteed a downstream ValueError.
+        return mapping.get((status or '').lower(), 'open')
 
     def _parse_order(self, order: lighter.models.Order) -> Order:
         # Normalize a variety of shapes: tx receipts, order DTOs, etc.
@@ -736,10 +838,36 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if side == "" and not order.is_ask:
             side = EOrderSide.BUY.value
         type_ = order.type
+        # `base_price` is a scaled int (units of 10**-price_decimals) and
+        # `*_base_amount` are scaled strings (units of 10**-size_decimals).
+        # Sending side scales UP (line ~547); receive side must scale DOWN,
+        # otherwise downstream consumers see notional inflated by
+        # 10**(price_decimals + size_decimals) and any fee/PnL math derived
+        # from `cost` is wildly off.
+        market = self.markets_by_id.get(market_id)
+        if isinstance(market, list):
+            market = market[0]
+        try:
+            price_dec = int(market["precision"]["price"]) if market else 0
+            size_dec = int(market["precision"]["amount"]) if market else 0
+        except (KeyError, TypeError, ValueError):
+            price_dec = 0
+            size_dec = 0
+        price_scale = 10 ** price_dec
+        size_scale = 10 ** size_dec
         price = order.price
-        avg = order.base_price
-        amount = float(order.initial_base_amount)
-        filled = float(order.filled_base_amount)
+        try:
+            avg = float(order.base_price) / price_scale if order.base_price else None
+        except (TypeError, ValueError):
+            avg = None
+        try:
+            amount = float(order.initial_base_amount) / size_scale
+        except (TypeError, ValueError):
+            amount = 0.0
+        try:
+            filled = float(order.filled_base_amount) / size_scale
+        except (TypeError, ValueError):
+            filled = 0.0
         remaining = None
         if amount is not None and filled is not None:
             remaining = max(0.0, amount - filled)
@@ -750,11 +878,26 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             f = order.fee
             fee = {'cost': self.safe_number(f, 'cost'), 'currency': self.safe_string(f, 'currency')}
 
+        # trigger_price comes back as a scaled int (units of 10**-price_decimals),
+        # same as base_price above — without scaling DOWN here, downstream
+        # callers see e.g. 82709 instead of 82.709 for a SOL stop. That breaks
+        # the engine's adoption matcher (_find_matching_reduce_stop_id), which
+        # compares this trigger against pos.stop_price; the ~1000× mismatch
+        # makes every cycle re-place the SL as a duplicate, and Lighter
+        # rejects each duplicate as "reduce-only exceeds position size",
+        # leaving the position unprotected until the user closes manually.
         additional = {}
+        try:
+            trig_scaled = (
+                float(order.trigger_price) / price_scale
+                if order.trigger_price is not None else None
+            )
+        except (TypeError, ValueError):
+            trig_scaled = None
         if order.type == "take-profit":
-            additional["takeProfitPrice"] = order.trigger_price
+            additional["takeProfitPrice"] = trig_scaled
         elif order.type == "stop-loss":
-            additional["stopLossPrice"] = order.trigger_price
+            additional["stopLossPrice"] = trig_scaled
 
         return self.extend({
             'id': oid,
@@ -791,8 +934,16 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
     def set_leverage(self, leverage: Int, symbol: Str = None, params={}):
         self.load_markets()
+        # Accept marginMode via params (ccxt convention). Default kept as
+        # 'isolated' for backward compatibility with any caller that's been
+        # relying on the previous hardcoded behaviour.
+        margin_mode_str = (params or {}).get('marginMode', 'isolated').lower()
+        if margin_mode_str == 'cross':
+            mode = self.signer_client.CROSS_MARGIN_MODE
+        else:
+            mode = self.signer_client.ISOLATED_MARGIN_MODE
         run(self.signer_client.update_leverage(market_index=self.markets[symbol]["id"], leverage=leverage,
-                                               margin_mode=self.signer_client.ISOLATED_MARGIN_MODE))
+                                               margin_mode=mode))
 
     def fetch_leverage(self, symbol: str, params={}):
         baseSymbol = self.ccxt_to_base(symbol)
