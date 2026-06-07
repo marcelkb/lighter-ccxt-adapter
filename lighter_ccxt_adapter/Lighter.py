@@ -878,29 +878,57 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
             f = order.fee
             fee = {'cost': self.safe_number(f, 'cost'), 'currency': self.safe_string(f, 'currency')}
 
-        # trigger_price comes back as a scaled int (units of 10**-price_decimals),
-        # same as base_price above — without scaling DOWN here, downstream
-        # callers see e.g. 82709 instead of 82.709 for a SOL stop. That breaks
-        # the engine's adoption matcher (_find_matching_reduce_stop_id), which
-        # compares this trigger against pos.stop_price; the ~1000× mismatch
-        # makes every cycle re-place the SL as a duplicate, and Lighter
-        # rejects each duplicate as "reduce-only exceeds position size",
-        # leaving the position unprotected until the user closes manually.
+        # trigger_price's on-wire scaling is INCONSISTENT across markets: some
+        # come back as a scaled int (units 10**-price_decimals, like base_price
+        # — e.g. 82709 for a SOL stop), others already as a plain decimal string
+        # (e.g. "0.08197" for a DOGE stop). Blindly dividing by price_scale is
+        # wrong for the decimal ones: it under-scales them by ~10**price_dec
+        # (observed live: a 0.085 DOGE stop parsed as 8.5e-08), which makes the
+        # engine's adoption matcher (_find_matching_reduce_stop_id) reject our
+        # own resting SL/TP. Every cycle then re-places it as a duplicate until
+        # Lighter's per-market order cap (21720) is hit and the position is
+        # reported UNPROTECTED. Disambiguate by picking whichever interpretation
+        # is closest to this order's own limit `price` (the SL/TP limit bound
+        # always sits within slippage of the trigger), so both wire formats and
+        # any per-market scale resolve correctly without symbol-specific guesses.
         additional = {}
-        try:
-            trig_scaled = (
-                float(order.trigger_price) / price_scale
-                if order.trigger_price is not None else None
-            )
-        except (TypeError, ValueError):
-            trig_scaled = None
-        if order.type == "take-profit":
+        trig_scaled = None
+        if order.trigger_price is not None:
+            try:
+                raw_trig = float(order.trigger_price)
+            except (TypeError, ValueError):
+                raw_trig = None
+            if raw_trig is not None:
+                candidates = [raw_trig]
+                if price_scale and price_scale != 1:
+                    candidates.append(raw_trig / price_scale)
+                try:
+                    ref_px = float(price) if price not in (None, "", 0) else None
+                except (TypeError, ValueError):
+                    ref_px = None
+                if ref_px and ref_px > 0:
+                    trig_scaled = min(candidates, key=lambda c: abs(c - ref_px))
+                else:
+                    # No usable reference price (pure trigger, no limit bound):
+                    # fall back to the scaled interpretation, matching the
+                    # historical scaled-int behaviour.
+                    trig_scaled = raw_trig / price_scale if price_scale else raw_trig
+        # Orders placed with BOTH a trigger and a limit bound (our SL/TP go
+        # through create_sl_order / create_tp_order with a `price`) come back
+        # typed as "stop-loss-limit" / "take-profit-limit", NOT the plain
+        # hyphen form. Handle both, otherwise the typed trigger key is never
+        # set and the engine's adoption matcher falls back to the RAW (scaled)
+        # info.trigger_price — a ~1000x mismatch that makes it re-place the
+        # SL/TP every cycle until the venue's per-market order cap (21720) is
+        # hit and the position is reported UNPROTECTED.
+        if order.type in ("take-profit", "take-profit-limit"):
             additional["takeProfitPrice"] = trig_scaled
-        elif order.type == "stop-loss":
+        elif order.type in ("stop-loss", "stop-loss-limit"):
             additional["stopLossPrice"] = trig_scaled
 
         return self.extend({
             'id': oid,
+            'reduceOnly': order.reduce_only,
             'clientOrderId': client_oid,
             'timestamp': ts,
             'datetime': self.iso8601(ts),
