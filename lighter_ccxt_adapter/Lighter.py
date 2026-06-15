@@ -314,30 +314,67 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
                 result[s] = self.fetch_ticker(s, params)
         return result
 
+    @staticmethod
+    def _timestamp_to_ms(ts) -> Int:
+        """Normalize a venue timestamp to ccxt's milliseconds. Lighter
+        endpoints are inconsistent about seconds vs milliseconds, so detect
+        by magnitude (anything below 10^12 can only be seconds)."""
+        if ts is None:
+            return None
+        try:
+            ts = int(ts)
+        except (TypeError, ValueError):
+            return None
+        return ts * 1000 if ts < 10 ** 12 else ts
+
     def fetch_trades(self, symbol: str, since: Int = None, limit: Int = None, params={}) -> List[Trade]:
         self.load_markets()
         market_id = self.symbol_to_market_id(symbol)
         if limit is None:
             limit = 100
         auth_token, _ = self.signer_client.create_auth_token_with_expiry()
+        # sort_dir='desc' (the API default, pinned here on purpose): with a
+        # hard limit of 100 the window MUST hold the newest fills, otherwise
+        # an active account only ever sees its oldest trades.
         resp: Trades = run(
-            self.order_api.trades(sort_by="timestamp", market_id=market_id, account_index=self.account_id, limit=limit,
+            self.order_api.trades(sort_by="timestamp", sort_dir="desc", market_id=market_id,
+                                  account_index=self.account_id, limit=limit,
                                   authorization=auth_token))
         out = []
         for trade in resp.trades:  # type Trade
+            ts = self._timestamp_to_ms(trade.timestamp)
+            # The trades endpoint has no server-side `since`; honor the ccxt
+            # contract by filtering here. Without this, callers computing
+            # PnL from "fills since the position opened" silently mix in
+            # fills from PREVIOUS positions (observed live: a SOL runner
+            # exit VWAP of 77.51 vs the real 65.86 close → +18 phantom PnL).
+            if since is not None and ts is not None and ts < since:
+                continue
+            # THIS account's side comes from the ask/bid account ids.
+            # `is_maker_ask` is the MAKER's side of the book — using it
+            # labeled our taker sells as buys, so side-filtered PnL lookups
+            # matched the wrong fills entirely.
+            we_are_ask = trade.ask_account_id == self.account_id
+            we_are_maker = trade.is_maker_ask == we_are_ask
+            fee_raw = trade.maker_fee if we_are_maker else trade.taker_fee
+            fee = None
+            if fee_raw:
+                # Fee ints are scaled USDC (6 decimals). Lighter currently
+                # charges 0 on both sides, so this path is mostly dormant.
+                fee = {'cost': fee_raw / 10 ** 6, 'currency': 'USDC'}
             out.append({
                 'id': trade.trade_id,
-                'order': None,
-                'timestamp': trade.timestamp,
-                'datetime': self.iso8601(trade.timestamp),
+                'order': trade.ask_id if we_are_ask else trade.bid_id,
+                'timestamp': ts,
+                'datetime': self.iso8601(ts),
                 'symbol': symbol,
                 'type': None,
-                'side': EOrderSide.SELL if trade.is_maker_ask else EOrderSide.BUY,
-                'takerOrMaker': None,
+                'side': (EOrderSide.SELL if we_are_ask else EOrderSide.BUY).value,
+                'takerOrMaker': 'maker' if we_are_maker else 'taker',
                 'price': trade.price,
                 'amount': trade.size,
                 'cost': trade.usd_amount,
-                'fee': trade.maker_fee,
+                'fee': fee,
                 'info': trade.to_dict(),
             })
         return out
@@ -586,7 +623,10 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
 
         if err is not None:
             print(f"error occured: {err}")
-            raise InvalidOrder(self.id + ' ' + str(err))
+            # f-string, not `self.id + ' ' + ...`: describe() sets id=None, so the
+            # concatenation raised `TypeError: NoneType + str` and MASKED the real
+            # venue error (e.g. 21706 'invalid order base or quote amount').
+            raise InvalidOrder(f"{self.id} {err}")
 
         id = None
         status = "open"
@@ -838,34 +878,39 @@ class Lighter(ccxt.Exchange, ImplicitAPI):
         if side == "" and not order.is_ask:
             side = EOrderSide.BUY.value
         type_ = order.type
-        # `base_price` is a scaled int (units of 10**-price_decimals) and
-        # `*_base_amount` are scaled strings (units of 10**-size_decimals).
-        # Sending side scales UP (line ~547); receive side must scale DOWN,
-        # otherwise downstream consumers see notional inflated by
-        # 10**(price_decimals + size_decimals) and any fee/PnL math derived
-        # from `cost` is wildly off.
+        # Field scaling on the receive side is NOT uniform — confirmed against a
+        # live LINK order (market_index 8, size_dec=1):
+        #   • The SCALED-INTEGER fields are `base_price` (820857 == 8.20857) and
+        #     `base_size` (13 == 1.3) — divide these by 10**decimals.
+        #   • The `*_base_amount` strings ('1.3', '0.0') and `price`/`trigger_price`
+        #     ('8.20857' / '8.29149') are ALREADY plain decimals in human units —
+        #     they must be used AS-IS.
+        # The old code wrongly divided `initial_base_amount`/`filled_base_amount`
+        # by size_scale, double-scaling them: a 1.3 LINK order parsed as 0.13, a
+        # 55.1 SL as 5.51. That made the engine's adoption matcher reject our own
+        # resting SL/TP (size 90% "off") and re-place duplicates every cycle until
+        # Lighter's per-market order cap (21720) fired and the position was falsely
+        # reported UNPROTECTED. DOGE only escaped because its size_dec is 0.
         market = self.markets_by_id.get(market_id)
         if isinstance(market, list):
             market = market[0]
         try:
             price_dec = int(market["precision"]["price"]) if market else 0
-            size_dec = int(market["precision"]["amount"]) if market else 0
         except (KeyError, TypeError, ValueError):
             price_dec = 0
-            size_dec = 0
         price_scale = 10 ** price_dec
-        size_scale = 10 ** size_dec
         price = order.price
         try:
             avg = float(order.base_price) / price_scale if order.base_price else None
         except (TypeError, ValueError):
             avg = None
+        # `*_base_amount` are already decimal — do NOT divide by size_scale.
         try:
-            amount = float(order.initial_base_amount) / size_scale
+            amount = float(order.initial_base_amount)
         except (TypeError, ValueError):
             amount = 0.0
         try:
-            filled = float(order.filled_base_amount) / size_scale
+            filled = float(order.filled_base_amount)
         except (TypeError, ValueError):
             filled = 0.0
         remaining = None
